@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
-use crate::b3d::{AnimClip, JointInfo, MeshData, compute_world_matrix};
+use crate::b3d::{AnimClip, JointInfo, MeshData, compute_world_matrices};
 use crate::b3d_parser::{Brush, Texture};
 use crate::math::{mat4_inverse, swap_yz_pos, swap_yz_quat, quat_to_gltf, root_pos, root_quat};
 use crate::texture::{load_texture, texture_stem};
@@ -191,10 +191,10 @@ fn build_gltf_inner(
 
     // --- skin (IBM) --------------------------------------------------------
     let skins: Vec<Value> = if has_skin {
+        let world_matrices = compute_world_matrices(joints);
         let ibm_off = bin.len();
-        for j_idx in 0..joints.len() {
-            let world = compute_world_matrix(joints, j_idx);
-            let inv = mat4_inverse(&world);
+        for world in &world_matrices {
+            let inv = mat4_inverse(world);
             for col in 0..4 {
                 bin.extend_from_slice(&inv[0][col].to_le_bytes());
                 bin.extend_from_slice(&inv[1][col].to_le_bytes());
