@@ -47,12 +47,16 @@ pub fn quat_mul(a: &[f32; 4], b: &[f32; 4]) -> [f32; 4] {
     ]
 }
 
-/// Build a row-major TRS matrix from B3D bind-pose data.
+/// Build a TRS matrix from B3D bind-pose data.
 ///
 /// `pos` and `rot` should already be converted to right-handed Y-up
 /// (via `neg_z_pos` / `neg_z_quat`).
 ///
-/// Row-major convention: `m[row][col]`, translation in `m[0..2][3]`.
+/// The rotation submatrix uses **column-major** formulas so that the matrix
+/// matches what glTF's TRS reconstruction produces. This ensures
+/// `node_matrix × IBM = I` at bind time.
+///
+/// Storage convention: `m[row][col]`, translation in `m[0..2][3]`.
 pub fn b3d_to_mat4(pos: [f32; 3], scale: [f32; 3], rot: [f32; 4]) -> Mat4 {
     let (x, y, z, w) = (rot[1], rot[2], rot[3], rot[0]);
     let xx = x * x; let yy = y * y; let zz = z * z;
@@ -61,21 +65,25 @@ pub fn b3d_to_mat4(pos: [f32; 3], scale: [f32; 3], rot: [f32; 4]) -> Mat4 {
 
     let mut m = [[0.0f32; 4]; 4];
 
+    // Diagonal: same in both row-major and column-major
     m[0][0] = (1.0 - 2.0 * (yy + zz)) * scale[0];
-    m[0][1] = 2.0 * (xy + wz) * scale[1];
-    m[0][2] = 2.0 * (xz - wy) * scale[2];
-    m[0][3] = pos[0];
-
-    m[1][0] = 2.0 * (xy - wz) * scale[0];
     m[1][1] = (1.0 - 2.0 * (xx + zz)) * scale[1];
-    m[1][2] = 2.0 * (yz + wx) * scale[2];
-    m[1][3] = pos[1];
-
-    m[2][0] = 2.0 * (xz + wy) * scale[0];
-    m[2][1] = 2.0 * (yz - wx) * scale[1];
     m[2][2] = (1.0 - 2.0 * (xx + yy)) * scale[2];
+
+    // Off-diagonals: column-major convention (matches glTF TRS)
+    m[0][1] = 2.0 * (xy - wz) * scale[1];
+    m[0][2] = 2.0 * (xz + wy) * scale[2];
+    m[1][0] = 2.0 * (xy + wz) * scale[0];
+    m[1][2] = 2.0 * (yz - wx) * scale[2];
+    m[2][0] = 2.0 * (xz - wy) * scale[0];
+    m[2][1] = 2.0 * (yz + wx) * scale[1];
+
+    // Translation row
+    m[0][3] = pos[0];
+    m[1][3] = pos[1];
     m[2][3] = pos[2];
 
+    // Homogeneous row
     m[3][0] = 0.0;
     m[3][1] = 0.0;
     m[3][2] = 0.0;

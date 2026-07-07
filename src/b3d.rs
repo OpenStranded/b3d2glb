@@ -133,9 +133,9 @@ pub fn collect_mesh(b3d: &B3D) -> MeshData {
     let mut uvs = Vec::with_capacity(vc);
 
     for v in &verts.vertices {
-        // Mesh vertices are in scene space: [x, y, -z] (negate Z).
-        // Child bones are in armature space: [x, z, y] (swap YZ).
-        // The root bone's -90°X rotation bridges the two.
+        // Mesh vertices are in root-node local space, same as root joints.
+        // Convert from B3D (left-handed Y-up) to glTF (right-handed Y-up)
+        // by negating Z: [x, y, -z]. This matches root_pos for root bones.
         positions.push([v.position[0], v.position[1], -v.position[2]]);
         normals.push([v.normal[0], v.normal[1], -v.normal[2]]);
         uvs.push([v.tex_coords[0], v.tex_coords[1]]);
