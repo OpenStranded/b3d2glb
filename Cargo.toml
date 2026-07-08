@@ -3,7 +3,7 @@ name = "b3d2glb"
 version = "0.2.1"
 edition = "2024"
 description = "Convert Blitz3D B3D models to glTF/GLB"
-license = "MIT OR Apache-2.0"
+license = "GPL-3.0-only"
 repository = "https://github.com/AvengerAnubis/b3d2glb"
 homepage = "https://github.com/AvengerAnubis/b3d2glb"
 
