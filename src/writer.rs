@@ -22,7 +22,7 @@ use crate::b3d::{AnimClip, JointInfo, MeshData, compute_world_matrices};
 use crate::b3d_parser::{Brush, Texture};
 use crate::cli::MaterialParams;
 use crate::math::{mat4_inverse, swap_yz_pos, swap_yz_quat, quat_to_gltf, root_pos, root_quat};
-use crate::texture::{load_texture, png_has_alpha};
+use crate::texture::{load_texture, png_has_alpha, png_has_semi_transparent};
 
 use serde_json::{json, Value};
 
@@ -593,11 +593,18 @@ fn build_materials(
 
         let color = brush.color;
 
-        // Check B3D alpha hints: texture has alpha channel (flags & 2),
-        // uses color-key masking (flags & 4), or alpha blend mode (blend == 1).
-        // Also check actual pixel data as a fallback (some B3D files omit flags).
-        let mut tex_has_alpha = tex_ref.map_or(false, |t| {
-            (t.flags & 2 != 0) || (t.flags & 4 != 0) || t.blend == 1
+        // Determine alpha mode from B3D hints:
+        // - flags & 2  = alpha channel → BLEND (smooth semi-transparency)
+        // - flags & 4  = color key    → MASK  (hard cutoff)
+        // - blend == 1 = alpha blend  → BLEND
+        let mut alpha_mode: Option<&str> = tex_ref.and_then(|t| {
+            if (t.flags & 2 != 0) || t.blend == 1 {
+                Some("BLEND")
+            } else if t.flags & 4 != 0 {
+                Some("MASK")
+            } else {
+                None
+            }
         });
 
         let mut mat_val = if let Some(tex) = tex_ref {
@@ -608,9 +615,15 @@ fn build_materials(
             let png_bytes = load_texture(&raw, game_dir, tex_cache);
 
             if let Some(bytes) = png_bytes {
-                // Fallback: check actual pixel alpha when B3D flags don't indicate it.
-                if !tex_has_alpha {
-                    tex_has_alpha = png_has_alpha(&bytes);
+                // Fallback: check actual pixel data when B3D flags don't indicate alpha.
+                if alpha_mode.is_none() {
+                    let has_alpha = png_has_alpha(&bytes);
+                    if has_alpha {
+                        // Determine MASK vs BLEND from pixel data:
+                        // If any pixel has semi-transparent alpha (1-254), use BLEND.
+                        // If all transparent pixels are fully transparent (0), use MASK.
+                        alpha_mode = Some(if png_has_semi_transparent(&bytes) { "BLEND" } else { "MASK" });
+                    }
                 }
                 let tex_idx = image_infos.len();
                 image_infos.push(ImageInfo { mime: "image/png".into(), data: bytes });
@@ -645,10 +658,12 @@ fn build_materials(
             })
         };
 
-        if tex_has_alpha {
+        if let Some(mode) = alpha_mode {
             if let Some(obj) = mat_val.as_object_mut() {
-                obj.insert("alphaMode".into(), json!("MASK"));
-                obj.insert("alphaCutoff".into(), json!(0.5));
+                obj.insert("alphaMode".into(), json!(mode));
+                if mode == "MASK" {
+                    obj.insert("alphaCutoff".into(), json!(0.5));
+                }
             }
         }
 

@@ -17,7 +17,48 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+/// Known texture extensions in priority order (used as fallback).
+const TEXTURE_EXTENSIONS: &[&str] = &["bmp", "jpg", "jpeg", "png", "tga"];
+
+/// Try to find a texture at `base_path` by trying the original extension first,
+/// then falling back to all known extensions.
+fn try_extensions(base_path: &Path, orig_ext: Option<&str>) -> Option<PathBuf> {
+    // 1. Try the original path as-is (includes its own extension).
+    if base_path.exists() {
+        return Some(base_path.to_path_buf());
+    }
+
+    // 2. Try original extension first (if known).
+    if let Some(ext) = orig_ext {
+        let ext_lower = ext.to_lowercase();
+        if TEXTURE_EXTENSIONS.contains(&ext_lower.as_str()) {
+            let p = base_path.with_extension(&ext_lower);
+            if p.exists() {
+                return Some(p);
+            }
+        }
+    }
+
+    // 3. Try all known extensions.
+    for ext in TEXTURE_EXTENSIONS {
+        // Skip if we already tried it above.
+        if orig_ext.is_some_and(|e| e.eq_ignore_ascii_case(ext)) {
+            continue;
+        }
+        let p = base_path.with_extension(ext);
+        if p.exists() {
+            return Some(p);
+        }
+    }
+
+    None
+}
+
 /// Find a texture file by its raw B3D path.
+///
+/// For each strategy, the **original extension** from the B3D path is tried
+/// first (if present and known).  Fallback extensions follow in order:
+/// `bmp`, `jpg`, `jpeg`, `png`, `tga`.
 ///
 /// Search strategies (first match wins):
 /// 1. `game_dir / raw_path` — preserves directory structure from B3D
@@ -33,40 +74,39 @@ pub fn find_texture(raw_path: &str, game_dir: &Path) -> Option<PathBuf> {
         .replace('\\', "/");
     let tex_path = Path::new(&clean);
 
+    // Extract the original extension so we can prioritise it.
+    let orig_ext = tex_path.extension().and_then(|e| e.to_str());
+
     // Strategy 1: game_dir / full original path (preserves directory structure)
     let full = game_dir.join(tex_path);
-    for ext in &["bmp", "jpg", "jpeg", "png", "tga"] {
-        let p = full.with_extension(ext);
-        if p.exists() { return Some(p); }
+    if let Some(p) = try_extensions(&full, orig_ext) {
+        return Some(p);
     }
-    if full.exists() { return Some(full); }
 
     // Strategy 2: game_dir / filename only
     if let Some(file_name) = tex_path.file_name().and_then(|s| s.to_str()) {
         let base = game_dir.join(file_name);
-        for ext in &["bmp", "jpg", "jpeg", "png", "tga"] {
-            let p = base.with_extension(ext);
-            if p.exists() { return Some(p); }
+        if let Some(p) = try_extensions(&base, orig_ext) {
+            return Some(p);
         }
-        if base.exists() { return Some(base); }
     }
 
     // Strategy 3: lowercase filename in game_dir
     if let Some(stem) = tex_path.file_stem().and_then(|s| s.to_str()) {
         let lower = stem.to_lowercase();
-        for ext in &["bmp", "jpg", "jpeg", "png", "tga"] {
-            let p = game_dir.join(format!("{lower}.{ext}"));
-            if p.exists() { return Some(p); }
+        let lower_path = game_dir.join(&lower);
+        if let Some(p) = try_extensions(&lower_path, orig_ext) {
+            return Some(p);
         }
     }
 
     // Strategy 4: legacy Stranded II paths
     if let Some(stem) = tex_path.file_stem().and_then(|s| s.to_str()) {
         for dir in &[game_dir.join("mods/Stranded II/gfx"), game_dir.join("gfx")] {
-            for ext in &["bmp", "jpg", "jpeg", "png", "tga"] {
-                for fname in &[stem, &stem.to_lowercase()] {
-                    let p = dir.join(format!("{fname}.{ext}"));
-                    if p.exists() { return Some(p); }
+            for fname in &[stem, &stem.to_lowercase()] {
+                let legacy_path = dir.join(fname);
+                if let Some(p) = try_extensions(&legacy_path, orig_ext) {
+                    return Some(p);
                 }
             }
         }
@@ -114,6 +154,28 @@ pub fn png_has_alpha(data: &[u8]) -> bool {
     };
     for (_x, _y, px) in img.pixels() {
         if px[3] < 255 {
+            return true;
+        }
+    }
+    false
+}
+
+/// Decode PNG bytes and return `true` if any pixel has semi-transparent alpha
+/// (between 1 and 254 inclusive). Fully transparent (0) or fully opaque (255)
+/// pixels don't count.
+///
+/// This is used to decide between `"BLEND"` (smooth transparency, needs
+/// semi-transparent pixels) and `"MASK"` (hard cutoff, all transparent pixels
+/// are fully transparent).
+pub fn png_has_semi_transparent(data: &[u8]) -> bool {
+    use image::GenericImageView;
+    let img = match image::load_from_memory(data) {
+        Ok(img) => img,
+        Err(_) => return false,
+    };
+    for (_x, _y, px) in img.pixels() {
+        let a = px[3];
+        if a > 0 && a < 255 {
             return true;
         }
     }
